@@ -194,16 +194,21 @@
             }
 
             raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(dots);
+            const intersects = raycaster.intersectObjects(dots, true);
 
             if (intersects.length > 0) {
-                if (hoveredDot !== intersects[0].object) {
-                    if (hoveredDot) hoveredDot.material.color.set(0xff0000);
-                    hoveredDot = intersects[0].object;
-                    hoveredDot.material.color.set(0x00ff00);
+                const intersectedObject = intersects[0].object.parent.type === 'Group' ? intersects[0].object.parent : intersects[0].object;
+                if (hoveredDot !== intersectedObject) {
+                    if (hoveredDot) {
+                        hoveredDot.children.forEach(cube => cube.material.color.set(0x404040));
+                    }
+                    hoveredDot = intersectedObject;
+                    hoveredDot.children.forEach(cube => cube.material.color.set(0x00ff00));
                 }
             } else {
-                if (hoveredDot) hoveredDot.material.color.set(0xff0000);
+                if (hoveredDot) {
+                    hoveredDot.children.forEach(cube => cube.material.color.set(0x404040));
+                }
                 hoveredDot = null;
             }
 
@@ -226,23 +231,24 @@
         function onMouseClick(event) {
             updateMousePosition(event);
             raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(dots);
+            const intersects = raycaster.intersectObjects(dots, true);
 
             if (intersects.length > 0) {
-                selectedDot = intersects[0].object;
+                const intersectedObject = intersects[0].object.parent.type === 'Group' ? intersects[0].object.parent : intersects[0].object;
+                selectedDot = intersectedObject;
                 openDotTextField(event, selectedDot);
             } else {
                 closeDotTextField();
             }
         }
 
-        function openDotTextField(event, dot) {
+        function openDotTextField(event, group) {
             dotTextField.style.display = 'block';
             dotTextField.style.left = `${event.clientX}px`;
             dotTextField.style.top = `${event.clientY}px`;
-            dotTextArea.value = dot.userData.text || '';
+            dotTextArea.value = group.userData.text || '';
             dotTextArea.focus();
-            updateViewFilesButton(dot);
+            updateViewFilesButton(group);
         }
 
         function closeDotTextField() {
@@ -253,10 +259,41 @@
             selectedDot = null;
         }
 
+        function addCubeGroupAtMousePosition() {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(sphere);
+
+            if (intersects.length > 0) {
+                const intersectionPoint = intersects[0].point;
+                const localPoint = sphere.worldToLocal(intersectionPoint.clone());
+
+                const groupSize = Math.floor(Math.random() * 3) + 1; // Random group size: 1, 2, or 3
+                const group = new THREE.Group();
+
+                for (let i = 0; i < groupSize; i++) {
+                    const cubeHeight = Math.floor(Math.random() * 3) + 1; // Random height: 1, 2, or 3
+                    const cubeGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.15 * cubeHeight);
+                    const cubeMaterial = new THREE.MeshPhongMaterial({ color: 0x404040 }); // Dark grey color
+                    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+                    // Position cubes next to each other
+                    cube.position.set(i * 0.15 - ((groupSize - 1) * 0.15 / 2), Math.floor(Math.random() *3) / 10, 0);
+                    cube.userData.text = '';
+                    group.add(cube);
+                }
+
+                group.position.copy(localPoint);
+                group.lookAt(sphere.position);
+                sphere.add(group);
+
+                // Add the entire group to the dots array instead of individual cubes
+                dots.push(group);
+            }
+        }
+
         function onKeyDown(event) {
             if (event.code === 'Space' && document.activeElement !== dotTextArea) {
                 event.preventDefault();
-                addDotAtMousePosition();
+                addCubeGroupAtMousePosition();
             } else if (event.key === 'Escape') {
                 closeDotTextField();
             }
@@ -271,26 +308,6 @@
         function updateMousePosition(event) {
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
-        }
-
-        function addDotAtMousePosition() {
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObject(sphere);
-
-            if (intersects.length > 0) {
-                const intersectionPoint = intersects[0].point;
-                const localPoint = sphere.worldToLocal(intersectionPoint.clone());
-
-                const dotGeometry = new THREE.SphereGeometry(0.05, 32, 32);
-                const dotMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-                const dot = new THREE.Mesh(dotGeometry, dotMaterial);
-
-                dot.position.copy(localPoint);
-                dot.userData.text = '';
-                sphere.add(dot);
-
-                dots.push(dot);
-            }
         }
 
         function handleFileUpload(event) {
