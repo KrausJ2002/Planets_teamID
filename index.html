@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive 3D Mercury with Text Fields and File Upload</title>
+    <style>
+        body { margin: 0; background-color: #000; color: #fff; font-family: monospace; }
+        canvas { display: block; }
+        #debug { position: absolute; top: 10px; left: 10px; }
+        @font-face {
+            font-family: 'VenusFont';
+            src: url('venus.otf') format('opentype');
+            font-weight: normal;
+            font-style: normal;
+        }
+        #text-container {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            font-family: 'VenusFont', sans-serif;
+            color: #fff;
+            font-size: 24px;
+        }
+        #edit-button {
+            margin-left: 10px;
+            padding: 5px 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #dot-text-field {
+            position: absolute;
+            width: 12.5vw;
+            height: 12.5vh;
+            background-color: rgba(0, 0, 0, 0.8);
+            border: 1px solid #fff;
+            display: none;
+            padding: 10px;
+            font-family: 'VenusFont', sans-serif;
+        }
+        #dot-text-field textarea {
+            width: 100%;
+            height: calc(100% - 60px);
+            background-color: transparent;
+            color: #fff;
+            border: none;
+            resize: none;
+            font-family: 'VenusFont', sans-serif;
+        }
+        #close-button, #upload-button, #view-files-button {
+            position: absolute;
+            top: 5px;
+            cursor: pointer;
+            font-size: 18px;
+            background: none;
+            border: none;
+            color: #fff;
+        }
+        #close-button { right: 5px; }
+        #upload-button { right: 30px; }
+        #view-files-button { right: 55px; display: none; }
+        #file-input { display: none; }
+    </style>
+</head>
+<body>
+    <div id="debug"></div>
+    <div id="text-container">
+        <span id="display-text">name</span>
+        <button id="edit-button">Edit</button>
+    </div>
+    <div id="dot-text-field">
+        <textarea id="dot-text-area"></textarea>
+        <button id="close-button">×</button>
+        <button id="upload-button">📎</button>
+        <button id="view-files-button">📁</button>
+        <input type="file" id="file-input" multiple>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let dots = [];
+        let scene, camera, renderer, sphere, raycaster, mouse;
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        const debugElement = document.getElementById('debug');
+        let hoveredDot = null;
+        let selectedDot = null;
+        const dotTextField = document.getElementById('dot-text-field');
+        const dotTextArea = document.getElementById('dot-text-area');
+        const closeButton = document.getElementById('close-button');
+        const uploadButton = document.getElementById('upload-button');
+        const viewFilesButton = document.getElementById('view-files-button');
+        const fileInput = document.getElementById('file-input');
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111111);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            const textureLoader = new THREE.TextureLoader();
+            
+            textureLoader.load(
+                'space.jpg',
+                function(texture) {
+                    scene.background = texture;
+                    updateDebug('Space texture loaded successfully');
+                },
+                function(xhr) {
+                    updateDebug('Space texture ' + (xhr.loaded / xhr.total * 100) + '% loaded');
+                },
+                function(error) {
+                    updateDebug('Error loading space texture: ' + error.type);
+                    console.error('Error loading space texture:', error);
+                }
+            );
+
+            const geometry = new THREE.SphereGeometry(2, 32, 32);
+            const material = new THREE.MeshPhongMaterial({ color: 0xaaaaaa });
+            sphere = new THREE.Mesh(geometry, material);
+            scene.add(sphere);
+
+            textureLoader.load(
+                'mercury.jpg',
+                function(texture) {
+                    sphere.material.map = texture;
+                    sphere.material.needsUpdate = true;
+                    updateDebug('Mercury texture loaded successfully');
+                },
+                function(xhr) {
+                    updateDebug('Mercury texture ' + (xhr.loaded / xhr.total * 100) + '% loaded');
+                },
+                function(error) {
+                    updateDebug('Error loading Mercury texture: ' + error.type);
+                    console.error('Error loading Mercury texture:', error);
+                }
+            );
+
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+
+            const pointLight = new THREE.PointLight(0xffffff, 1, 100);
+            pointLight.position.set(10, 10, 10);
+            scene.add(pointLight);
+
+            renderer.domElement.addEventListener('mousedown', onMouseDown);
+            renderer.domElement.addEventListener('mousemove', onMouseMove);
+            renderer.domElement.addEventListener('mouseup', onMouseUp);
+            renderer.domElement.addEventListener('wheel', onWheel);
+            renderer.domElement.addEventListener('click', onMouseClick);
+            
+            closeButton.addEventListener('click', closeDotTextField);
+            uploadButton.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', handleFileUpload);
+            viewFilesButton.addEventListener('click', viewFiles);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('click', onDocumentClick);
+
+            animate();
+        }
+
+        function updateDebug(message) {
+            debugElement.innerHTML += message + '<br>';
+            console.log(message);
+        }
+
+        function onMouseDown(event) {
+            isDragging = true;
+            updateMousePosition(event);
+        }
+
+        function onMouseMove(event) {
+            updateMousePosition(event);
+
+            if (isDragging) {
+                const deltaMove = {
+                    x: event.clientX - previousMousePosition.x,
+                    y: event.clientY - previousMousePosition.y
+                };
+
+                const rotateSpeed = 0.005;
+                sphere.rotation.y += deltaMove.x * rotateSpeed;
+                sphere.rotation.x += deltaMove.y * rotateSpeed;
+            }
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(dots);
+
+            if (intersects.length > 0) {
+                if (hoveredDot !== intersects[0].object) {
+                    if (hoveredDot) hoveredDot.material.color.set(0xff0000);
+                    hoveredDot = intersects[0].object;
+                    hoveredDot.material.color.set(0x00ff00);
+                }
+            } else {
+                if (hoveredDot) hoveredDot.material.color.set(0xff0000);
+                hoveredDot = null;
+            }
+
+            previousMousePosition = {
+                x: event.clientX,
+                y: event.clientY
+            };
+        }
+
+        function onMouseUp(event) {
+            isDragging = false;
+        }
+
+        function onWheel(event) {
+            event.preventDefault();
+            camera.position.z += event.deltaY * 0.01;
+            camera.position.z = Math.max(3, Math.min(camera.position.z, 10));
+        }
+
+        function onMouseClick(event) {
+            updateMousePosition(event);
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(dots);
+
+            if (intersects.length > 0) {
+                selectedDot = intersects[0].object;
+                openDotTextField(event, selectedDot);
+            } else {
+                closeDotTextField();
+            }
+        }
+
+        function openDotTextField(event, dot) {
+            dotTextField.style.display = 'block';
+            dotTextField.style.left = `${event.clientX}px`;
+            dotTextField.style.top = `${event.clientY}px`;
+            dotTextArea.value = dot.userData.text || '';
+            dotTextArea.focus();
+            updateViewFilesButton(dot);
+        }
+
+        function closeDotTextField() {
+            if (selectedDot) {
+                selectedDot.userData.text = dotTextArea.value;
+            }
+            dotTextField.style.display = 'none';
+            selectedDot = null;
+        }
+
+        function onKeyDown(event) {
+            if (event.code === 'Space' && document.activeElement !== dotTextArea) {
+                event.preventDefault();
+                addDotAtMousePosition();
+            } else if (event.key === 'Escape') {
+                closeDotTextField();
+            }
+        }
+
+        function onDocumentClick(event) {
+            if (!dotTextField.contains(event.target) && event.target !== renderer.domElement) {
+                closeDotTextField();
+            }
+        }
+
+        function updateMousePosition(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+        }
+
+        function addDotAtMousePosition() {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(sphere);
+
+            if (intersects.length > 0) {
+                const intersectionPoint = intersects[0].point;
+                const localPoint = sphere.worldToLocal(intersectionPoint.clone());
+
+                const dotGeometry = new THREE.SphereGeometry(0.05, 32, 32);
+                const dotMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                const dot = new THREE.Mesh(dotGeometry, dotMaterial);
+
+                dot.position.copy(localPoint);
+                dot.userData.text = '';
+                sphere.add(dot);
+
+                dots.push(dot);
+            }
+        }
+
+        function handleFileUpload(event) {
+            if (selectedDot) {
+                if (!selectedDot.userData.files) {
+                    selectedDot.userData.files = [];
+                }
+                selectedDot.userData.files.push(...event.target.files);
+                updateViewFilesButton(selectedDot);
+            }
+            fileInput.value = '';
+        }
+
+        function updateViewFilesButton(dot) {
+            if (dot.userData.files && dot.userData.files.length > 0) {
+                viewFilesButton.style.display = 'block';
+                viewFilesButton.textContent = `📁 (${dot.userData.files.length})`;
+            } else {
+                viewFilesButton.style.display = 'none';
+            }
+        }
+
+        function viewFiles() {
+            if (selectedDot && selectedDot.userData.files) {
+                const fileList = selectedDot.userData.files.map(file => file.name).join('\n');
+                alert(`Files attached to this dot:\n${fileList}`);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        init();
+        updateDebug('Script initialized with text field and file upload functionality');
+    </script>
+    <script>
+        const editButton = document.getElementById('edit-button');
+        const displayText = document.getElementById('display-text');
+        const textContainer = document.getElementById('text-container');
+    
+        editButton.addEventListener('click', function() {
+            const inputField = document.createElement('input');
+            inputField.type = 'text';
+            inputField.value = displayText.textContent;
+            inputField.style.fontFamily = 'VenusFont, sans-serif';
+            inputField.style.fontSize = '24px';
+            inputField.style.textAlign = 'center';
+    
+            textContainer.replaceChild(inputField, displayText);
+            inputField.focus();
+    
+            function finishEditing() {
+                displayText.textContent = inputField.value || 'name';
+                textContainer.replaceChild(displayText, inputField);
+            }
+    
+            inputField.addEventListener('blur', finishEditing);
+            inputField.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter') {
+                    finishEditing();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
